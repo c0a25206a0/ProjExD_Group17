@@ -840,28 +840,50 @@ class GameOverScene(Scene):
 
 
 # ================== ゲームメインクラス ==================
+class MusicPlayer:
+    """アップロードされたSeven_Bells_Ringing.mp3を再生するクラス"""
+    def __init__(self, filepath: str = "Seven_Bells_Ringing.mp3"):
+        self.filepath = filepath
+        self.playing = False
+
+    def play(self):
+        """BGMをループ再生する"""
+        try:
+            if not self.playing:
+                pygame.mixer.music.load(self.filepath)
+                pygame.mixer.music.play(-1)  # -1で無限ループ
+                self.playing = True
+        except pygame.error as e:
+            print(f"BGMの読み込みに失敗しました: {e}")
+
+    def stop(self):
+        """BGMを停止する"""
+        pygame.mixer.music.stop()
+        self.playing = False
 
 class Game:
     """
     ゲーム全体を管理するメインクラス
-    
-    メインループ、シーン管理、入力処理、描画を統括します。
     """
     
     def __init__(self) -> None:
         """ゲームの初期化"""
-        # Pygame の初期化
         pygame.init()
+        # ミキサーの初期化（重要）
+        pygame.mixer.init()
         
-        # ディスプレイの設定
+        # BGMプレイヤーのインスタンス作成
+        self.music_player = MusicPlayer("Seven_Bells_Ringing.mp3")
+        # BGMを再生開始
+        self.music_player.play()
+        
+        # ... (以下、元の __init__ の続き) ...
         self.surface: pygame.Surface = pygame.display.set_mode(
             (Config.SCREEN_WIDTH, Config.SCREEN_HEIGHT))
         pygame.display.set_caption("Fake Mario - 2D Platformer")
         
-        # クロックの設定（FPS制御用）
         self.clock: pygame.time.Clock = pygame.time.Clock()
         
-        # シーン管理
         self.current_scene_type: SceneType = SceneType.TITLE
         self.scenes: dict = {
             SceneType.TITLE: TitleScene(),
