@@ -69,8 +69,25 @@ class Config:
 
     # 背景設定（将来背景画像に差し替え可能）
     BACKGROUND_COLOR: Tuple[int, int, int] = COLOR_LIGHT_BLUE
-    BACKGROUND_IMAGE: Optional[pygame.Surface] = None
+    BACKGROUND_IMAGE_PATH: str = "背景.png"  
 
+    # ステージ・システム
+    GROUND_IMAGE_PATH: str = "地面.png"            
+    BLOCK_IMAGE_PATH: str = "ブロック.png"
+    GOAL_IMAGE_PATH: str = "ゴールお城.png"         
+    # 主人公（プレイヤー）の状態
+    PLAYER_IMAGE_PATH: str = "主人公.png"                    # 通常スライム
+    PLAYER_FIRE_IMAGE_PATH: str = "ファイヤー.png"            # ファイヤースライム
+    PLAYER_FIRE_ATTACK_IMAGE_PATH: str = "ファイヤーの火を吐く-removebg-preview.png" # 攻撃モーション
+    PLAYER_STAR_IMAGE_PATH: str = "スター状態.png"            # 無敵スライム
+
+    # アイテム・エフェクト
+    ITEM_MUSHROOM_IMAGE_PATH: str = "キノコ.png"
+    EFFECT_FIREBALL_IMAGE_PATH: str = "火単体.png"           # 飛ばす火の玉
+
+    # 敵キャラクター
+    ENEMY_ZAKO_IMAGE_PATH: str = "雑魚的.png"
+    ENEMY_BOSS_IMAGE_PATH: str = "ラスボス.png" 
 
 class SceneType(Enum):
     """シーンの種類を定義する列挙型"""
@@ -79,15 +96,16 @@ class SceneType(Enum):
     GAME_OVER = 3
     GAME_CLEAR = 4
 
-
 # ================== ブロッククラス ==================
 
 class Block:
     """
     ステージの床や足場を表すクラス
     
-    このクラスを継承することで、特殊なギミックブロックを
-    簡単に実装できるように設計されています。
+    【これまでのすべての修正を反映した完全版】
+    ・画像を縦長（1.8倍）に引き伸ばし
+    ・主人公が深く（45ピクセル）めり込んで歩けるように判定を調整
+    ・draw関数の引数エラーを100%回避する安全設計
     """
     
     def __init__(self, x: int, y: int, width: int = Config.BLOCK_WIDTH,
@@ -97,39 +115,50 @@ class Block:
                  image: Optional[pygame.Surface] = None) -> None:
         """
         ブロックの初期化
-        
-        Args:
-            x: X座標（ワールド座標）
-            y: Y座標（ワールド座標）
-            width: ブロックの幅（ピクセル）
-            height: ブロックの高さ（ピクセル）
-            kind: ブロックの種類（将来のテクスチャ差し替え用）
-            color: ブロックの色（RGB）
-            image: 画像アセット（pygame.Surface）
         """
-        self.x: int = x
-        self.y: int = y
-        self.width: int = width
-        self.height: int = height
+        # すべての値を確実に整数（int）にして保存
+        self.x: int = int(x)
+        self.y: int = int(y)
+        self.width: int = int(width)
+        self.height: int = int(height)
         self.kind: str = kind
-        self.image: Optional[pygame.Surface] = image
         self.color: Tuple[int, int, int] = color
+        self.image: Optional[pygame.Surface] = image
 
-        if self.image is not None and self.image.get_size() != (self.width, self.height):
-            self.image = pygame.transform.scale(self.image, (self.width, self.height))
-
+        # 1. 画像が設定されていない場合、種類に合わせて自動読み込み
         if self.image is None:
+            import os
+            try:
+                current_dir = os.path.dirname(os.path.abspath(__file__))
+                file_name = None
+
+                if kind == "ground":
+                    file_name = Config.GROUND_IMAGE_PATH       # "地面.png"
+                elif kind == "platform" or kind == "step":
+                    file_name = Config.BLOCK_IMAGE_PATH        # "ブロック.png"
+                elif kind == "goal":
+                    file_name = Config.GOAL_IMAGE_PATH         # "ゴールお城.png"
+
+                if file_name is not None:
+                    full_path = os.path.join(current_dir, file_name)
+                    self.image = pygame.image.load(full_path).convert_alpha()
+                    
+            except Exception as e:
+                print(f"ブロック画像（{kind}）の読み込みに失敗しました: {e}")
+                self.image = None
+
+        # 2. 画像の引き伸ばし処理（1.8倍）
+        if self.image is not None:
+            stretch_scale = 1.8
+            self.height = int(self.height * stretch_scale)
+            
+            # 縦長になったサイズに画像を変換
+            self.image = pygame.transform.scale(self.image, (self.width, self.height))
+        else:
             self.color = self._get_color_for_kind(kind)
 
     def _get_color_for_kind(self, kind: str) -> Tuple[int, int, int]:
-        """
-        ブロックの種類に応じたカラーを返す
-        
-        Args:
-            kind: ブロックの種類
-        Returns:
-            表示色（RGB）
-        """
+        """画像がないとき用の色分け"""
         kind_to_color = {
             "ground": Config.COLOR_GREEN,
             "platform": Config.COLOR_GRAY,
@@ -141,35 +170,61 @@ class Block:
 
     def get_rect(self) -> pygame.Rect:
         """
-        ブロックの矩形判定オブジェクトを取得
+        ブロックの矩形判定オブジェクトを取得（衝突判定用）
         
-        Returns:
-            ブロックを表すpygame.Rectオブジェクト
+        判定の天井を45ピクセル下げることで、主人公を深くめり込ませます。
         """
-        return pygame.Rect(self.x, self.y, self.width, self.height)
+        sink_pixels = 65
+        
+        adjusted_y = self.y + sink_pixels
+        adjusted_height = self.height - sink_pixels
+        
+        if adjusted_height <= 0:
+            adjusted_height = 1
+            
+        return pygame.Rect(self.x, adjusted_y, self.width, adjusted_height)
     
-    def draw(self, surface: pygame.Surface, camera_x: int) -> None:
+    def draw(self, *args, **kwargs) -> None:
         """
-        ブロックを描画（カメラオフセット適用）
+        ブロックを描画（エラー完全回避版）
         
-        Args:
-            surface: 描画対象のサーフェス
-            camera_x: カメラのX座標オフセット
+        メイン側の呼び出し方が引数をどう渡してきても、
+        自動で判別してエラーを出さずに安全に描画します。
         """
+        surface = None
+        camera_x = 0
+
+        # 位置引数 (*args) からデータを取り出す
+        if len(args) >= 1:
+            surface = args[0]
+        if len(args) >= 2:
+            camera_x = args[1]
+
+        # キーワード引数 (**kwargs) からデータを取り出す
+        if "surface" in kwargs:
+            surface = kwargs["surface"]
+        if "camera_x" in kwargs:
+            camera_x = kwargs["camera_x"]
+
+        # 画面が正常に渡されていなければ処理をスキップ
+        if surface is None:
+            return
+
         # 画面内のX座標を計算
-        screen_x: int = self.x - camera_x
+        screen_x: int = self.x - int(camera_x)
         
-        # 画面外の場合は描画しない
+        # 画面外の場合は描画しない（軽量化）
         if screen_x + self.width < 0 or screen_x > Config.SCREEN_WIDTH:
             return
         
-        rect: pygame.Rect = pygame.Rect(screen_x, self.y, self.width, self.height)
+        # 1.8倍に引き伸ばされた画像を正しい位置に描画
         if self.image is not None:
             surface.blit(self.image, (screen_x, self.y))
         else:
+            # 画像がない場合の予備表示
+            rect: pygame.Rect = pygame.Rect(screen_x, self.y, self.width, self.height)
             pygame.draw.rect(surface, self.color, rect)
             pygame.draw.rect(surface, Config.COLOR_BLACK, rect, 2)
-
 
 # ================== ゴールクラス ==================
 
@@ -177,44 +232,78 @@ class Goal:
     """
     ステージのゴール（ゴール地点）を表すクラス
     
-    プレイヤーがこのゴールに接触するとゲームクリアになります。
+    4倍の超巨大お城が画面の右端で見切れないように、
+    X座標を自動で左側に回り込ませて全体を映すコードです。
     """
     
     def __init__(self, x: int = Config.GOAL_X, y: int = Config.GOAL_Y,
                  width: int = Config.GOAL_WIDTH, height: int = Config.GOAL_HEIGHT) -> None:
         """
         ゴールの初期化
-        
-        Args:
-            x: X座標（ワールド座標）
-            y: Y座標（ワールド座標）
-            width: ゴールの幅（ピクセル）
-            height: ゴールの高さ（ピクセル）
         """
-        self.x: int = x
-        self.y: int = y
-        self.width: int = width
-        self.height: int = height
+        # ワールド座標を整数（int）にして保存
+        self.x: int = int(x)
+        self.y: int = int(y)
+        self._original_width: int = int(width)
+        self._original_height: int = int(height)
+        
         self.color: Tuple[int, int, int] = Config.COLOR_GOLD
+        self.image: Optional[pygame.Surface] = None
+
+        # 1. 「ゴールお城.png」の画像を自動で読み込む
+        import os
+        try:
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            file_name = Config.GOAL_IMAGE_PATH 
+            
+            full_path = os.path.join(current_dir, file_name)
+            self.image = pygame.image.load(full_path).convert_alpha()
+            
+            # 4.0倍にスケールアップ
+            scale_size = 4.0
+            self.width = int(self._original_width * scale_size)
+            self.height = int(self._original_height * scale_size)
+            
+            # 💡 【今回のメイン修正：左側へずらす】
+            # お城が横に大きくなった分（self.width - self._original_width）、
+            # そのままだと右にはみ出るので、その差分の「約半分〜8割」くらいを左側に引っ張ります。
+            # 最後の「- 64」の数字を大きくするほど、お城がさらに左側に移動します。
+            self.x = self.x - (self.width - self._original_width) - 64
+            
+            # 【高さの調整】下端を地面に合わせる（前回の設定を維持）
+            self.y = self.y - (self.height - self._original_height) + 40
+            
+            # 4倍サイズに画像を変換
+            self.image = pygame.transform.scale(self.image, (self.width, self.height))
+            
+        except Exception as e:
+            print(f"ゴールお城画像の読み込みに失敗しました: {e}")
+            self.image = None
+            self.width = self._original_width
+            self.height = self._original_height
     
     def get_rect(self) -> pygame.Rect:
         """
-        ゴールの矩形判定オブジェクトを取得
-        
-        Returns:
-            ゴールを表すpygame.Rectオブジェクト
+        ゴールの矩形判定オブジェクトを取得（衝突判定用）
         """
-        return pygame.Rect(self.x, self.y, self.width, self.height)
+        # お城の位置（self.x）が左にずれたので、当たり判定の門の位置も自動で連動します。
+        # 左右の余白を削って、中央の門だけに判定を絞ります。
+        shrink_pixels_x = 90 
+        
+        adjusted_x = self.x + shrink_pixels_x
+        adjusted_width = self.width - (shrink_pixels_x * 2)
+        
+        adjusted_y = self.y 
+        adjusted_height = self.height
+        
+        if adjusted_width <= 0:
+            adjusted_width = 1
+            
+        return pygame.Rect(adjusted_x, adjusted_y, adjusted_width, adjusted_height)
     
     def check_collision(self, player_rect: pygame.Rect) -> bool:
         """
         プレイヤーとゴールの衝突判定を確認
-        
-        Args:
-            player_rect: プレイヤーの矩形判定オブジェクト
-        
-        Returns:
-            衝突している場合True、していない場合False
         """
         goal_rect: pygame.Rect = self.get_rect()
         return player_rect.colliderect(goal_rect)
@@ -222,38 +311,18 @@ class Goal:
     def draw(self, surface: pygame.Surface, camera_x: int) -> None:
         """
         ゴールを描画（カメラオフセット適用）
-        
-        Args:
-            surface: 描画対象のサーフェス
-            camera_x: カメラのX座標オフセット
         """
-        # 画面内のX座標を計算
-        screen_x: int = self.x - camera_x
+        screen_x: int = self.x - int(camera_x)
         
-        # 画面外の場合は描画しない
         if screen_x + self.width < 0 or screen_x > Config.SCREEN_WIDTH:
             return
         
-        # ゴールを描画（フラグポール風）
-        goal_rect: pygame.Rect = pygame.Rect(screen_x, self.y, self.width, self.height)
-        pygame.draw.rect(surface, self.color, goal_rect)
-        pygame.draw.rect(surface, Config.COLOR_BLACK, goal_rect, 3)
-        
-        # ゴール内に装飾（星を描画）
-        center_x: int = screen_x + self.width // 2
-        center_y: int = self.y + self.height // 2
-        pygame.draw.polygon(surface, Config.COLOR_YELLOW, [
-            (center_x, center_y - 8),
-            (center_x + 4, center_y - 2),
-            (center_x + 8, center_y),
-            (center_x + 4, center_y + 4),
-            (center_x + 6, center_y + 8),
-            (center_x, center_y + 5),
-            (center_x - 6, center_y + 8),
-            (center_x - 4, center_y + 4),
-            (center_x - 8, center_y),
-            (center_x - 4, center_y - 2)
-        ])
+        if self.image is not None:
+            surface.blit(self.image, (screen_x, self.y))
+        else:
+            goal_rect: pygame.Rect = pygame.Rect(screen_x, self.y, self.width, self.height)
+            pygame.draw.rect(surface, self.color, goal_rect)
+            pygame.draw.rect(surface, Config.COLOR_BLACK, goal_rect, 3)
 
 
 # ================== プレイヤークラス ==================
@@ -262,9 +331,8 @@ class Player:
     """
     プレイヤーキャラクターを表すクラス
     
-    移動、ジャンプ、重力処理、およびブロックとの当たり判定を
-    担当します。このクラスを継承することで、様々なプレイヤーバリエーション
-    を実装できます。
+    「主人公.png」の画像を読み込み、移動、ジャンプ、重力処理、
+    および左右の反転描画に対応したコードです。
     """
     
     def __init__(self, x: int = Config.PLAYER_START_X,
@@ -273,12 +341,6 @@ class Player:
                  height: int = Config.PLAYER_HEIGHT) -> None:
         """
         プレイヤーの初期化
-        
-        Args:
-            x: 初期X座標（ワールド座標）
-            y: 初期Y座標（ワールド座標）
-            width: プレイヤーの幅（ピクセル）
-            height: プレイヤーの高さ（ピクセル）
         """
         self.x: float = x
         self.y: float = y
@@ -294,34 +356,45 @@ class Player:
         self.is_on_ground: bool = True  # 地面に接地中フラグ
         self.color: Tuple[int, int, int] = Config.COLOR_BLUE
         self.facing_right: bool = True  # 向き（右：True、左：False）
+
+        # 💡 「主人公.png」の画像を読み込む
+        import os
+        try:
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            # Configに PLAYER_IMAGE_PATH = "主人公.png" があればそれを使い、
+            # なければ直接文字列で指定して読み込みます。
+            file_name = getattr(Config, "PLAYER_IMAGE_PATH", "主人公.png")
+            
+            full_path = os.path.join(current_dir, file_name)
+            self.image_original = pygame.image.load(full_path).convert_alpha()
+            
+            # 設定されたプレイヤーのサイズ（width, height）に画像をリサイズ
+            self.image_original = pygame.transform.scale(self.image_original, (self.width, self.height))
+        except Exception as e:
+            print(f"プレイヤー画像の読み込みに失敗しました（予備の四角表示にします）: {e}")
+            self.image_original = None
     
     def get_rect(self) -> pygame.Rect:
         """
         プレイヤーの矩形判定オブジェクトを取得
-        
-        Returns:
-            プレイヤーを表すpygame.Rectオブジェクト
         """
         return pygame.Rect(int(self.x), int(self.y), self.width, self.height)
     
     def handle_input(self, keys: pygame.key.ScancodeWrapper) -> None:
         """
         キー入力を処理してプレイヤーの動作を更新
-        
-        Args:
-            keys: pygame.key.get_pressed()の戻り値
         """
         # 左右の移動処理
         if keys[pygame.K_LEFT]:
             self.vx = -Config.PLAYER_MOVE_SPEED
-            self.facing_right = False
+            self.facing_right = False  # 左を向く
         elif keys[pygame.K_RIGHT]:
             self.vx = Config.PLAYER_MOVE_SPEED
-            self.facing_right = True
+            self.facing_right = True   # 右を向く
         else:
             self.vx = 0.0
         
-        # ジャンプ処理（地面に接地していて、スペースキーが押された）
+        # ジャンプ処理
         if keys[pygame.K_SPACE] and self.is_on_ground:
             self.vy = -Config.PLAYER_JUMP_POWER
             self.is_jumping = True
@@ -329,31 +402,20 @@ class Player:
     
     def apply_gravity(self) -> None:
         """重力を適用してY方向の速度を更新"""
-        # 重力加速度を追加
         self.vy += Config.GRAVITY
-        
-        # 最大落下速度に制限
         if self.vy > Config.MAX_FALL_SPEED:
             self.vy = Config.MAX_FALL_SPEED
     
     def update(self, blocks: List[Block]) -> None:
         """
         プレイヤーの状態を更新
-        
-        Args:
-            blocks: ステージ上のすべてのブロックのリスト
         """
-        # 重力を適用
         self.apply_gravity()
         
-        # 位置を更新
         self.x += self.vx
         self.y += self.vy
         
-        # 接地状態をリセット
         self.is_on_ground = False
-        
-        # ブロックとの当たり判定
         self._check_block_collisions(blocks)
         
         # 画面下部でゲームオーバー判定
@@ -363,72 +425,60 @@ class Player:
     def _check_block_collisions(self, blocks: List[Block]) -> None:
         """
         ブロックとの当たり判定を処理
-        
-        Args:
-            blocks: 判定対象のブロックリスト
         """
         player_rect: pygame.Rect = self.get_rect()
         
         for block in blocks:
             block_rect: pygame.Rect = block.get_rect()
             
-            # 矩形が交差しているかチェック
             if not player_rect.colliderect(block_rect):
                 continue
             
-            # 衝突時の処理
-            # Y方向の衝突判定（上下からの衝突を区別）
             overlap_y_from_top: int = player_rect.bottom - block_rect.top
             overlap_y_from_bottom: int = block_rect.bottom - player_rect.top
-            
-            # X方向の衝突判定（左右からの衝突を区別）
             overlap_x_from_left: int = player_rect.right - block_rect.left
             overlap_x_from_right: int = block_rect.right - player_rect.left
             
-            # 最小オーバーラップ方向に応じて対応
             min_overlap: int = min(overlap_y_from_top, overlap_y_from_bottom,
                                    overlap_x_from_left, overlap_x_from_right)
             
             if min_overlap == overlap_y_from_top:
-                # プレイヤーがブロックの上から着地
                 self.y = block_rect.top - self.height
                 self.vy = 0.0
                 self.is_on_ground = True
                 self.is_jumping = False
             elif min_overlap == overlap_y_from_bottom:
-                # プレイヤーがブロックの下に衝突（頭をぶつける）
                 self.y = block_rect.bottom
                 self.vy = 0.0
             elif min_overlap == overlap_x_from_left:
-                # プレイヤーがブロックの左から衝突
                 self.x = block_rect.left - self.width
             elif min_overlap == overlap_x_from_right:
-                # プレイヤーがブロックの右から衝突
                 self.x = block_rect.right
     
     def draw(self, surface: pygame.Surface, camera_x: int) -> None:
         """
         プレイヤーを描画（カメラオフセット適用）
-        
-        Args:
-            surface: 描画対象のサーフェス
-            camera_x: カメラのX座標オフセット
         """
-        # 画面内のX座標を計算
         screen_x: int = int(self.x) - camera_x
         screen_y: int = int(self.y)
         
-        # プレイヤーの矩形を描画
-        rect: pygame.Rect = pygame.Rect(screen_x, screen_y, self.width, self.height)
-        pygame.draw.rect(surface, self.color, rect)
-        
-        # 枠線を描画
-        pygame.draw.rect(surface, Config.COLOR_BLACK, rect, 2)
-        
-        # 顔の簡単な表現（ドット絵風）
-        eye_offset: int = 8 if self.facing_right else (self.width - 14)
-        pygame.draw.circle(surface, Config.COLOR_BLACK, 
-                         (screen_x + eye_offset, screen_y + 12), 2)
+        if self.image_original is not None:
+            # 💡 【向きの自動反転】
+            # 右向きならそのまま、左向きなら画像を左右反転（横反転：True、縦反転：False）させて描画します
+            if self.facing_right:
+                surface.blit(self.image_original, (screen_x, screen_y))
+            else:
+                flipped_image = pygame.transform.flip(self.image_original, True, False)
+                surface.blit(flipped_image, (screen_x, screen_y))
+        else:
+            # 【予備】画像がない場合は元の青い四角形と目を描画
+            rect: pygame.Rect = pygame.Rect(screen_x, screen_y, self.width, self.height)
+            pygame.draw.rect(surface, self.color, rect)
+            pygame.draw.rect(surface, Config.COLOR_BLACK, rect, 2)
+            
+            eye_offset: int = 8 if self.facing_right else (self.width - 14)
+            pygame.draw.circle(surface, Config.COLOR_BLACK, 
+                               (screen_x + eye_offset, screen_y + 12), 2)
     
     def reset(self) -> None:
         """プレイヤーをリセット（ゲームオーバー時など）"""
@@ -563,8 +613,23 @@ class GameScene(Scene):
         self.camera_x: int = 0  # カメラの X 座標（ワールド座標）
         self.score: int = 0
         self.font: pygame.font.Font = pygame.font.Font(None, 36)
-        self.background_image: Optional[pygame.Surface] = Config.BACKGROUND_IMAGE
-    
+        try:
+            import os
+            # プログラムがあるフォルダの場所を絶対パスで取得
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            # 「背景.png」の正確なフルパス（住所）を作る
+            bg_path = os.path.join(current_dir, "背景.png")
+            
+            # 画像を読み込んで画面サイズ（800x600）にリサイズ
+            raw_bg = pygame.image.load(bg_path).convert()
+            self.background_image = pygame.transform.scale(raw_bg, (Config.SCREEN_WIDTH, Config.SCREEN_HEIGHT))
+            print("背景画像の読み込みに成功しました！")
+            
+        except Exception as e:
+            print(f"背景画像の読み込みに失敗しました（予備の水色背景を使用します）: {e}")
+            # 万が一画像が見つからなくても、ゲームが落ちないように水色で塗りつぶす
+            self.background_image = pygame.Surface((Config.SCREEN_WIDTH, Config.SCREEN_HEIGHT))
+            self.background_image.fill((135, 206, 235))    
     def _create_stage(self) -> List[Block]:
         """
         ステージを作成する
