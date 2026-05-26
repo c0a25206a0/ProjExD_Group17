@@ -1,5 +1,8 @@
 # フェイクマリオ
 
+![title](photo.png)
+
+
 ## 実行環境の必要条件
 * python >= 3.10
 * pygame >= 2.1
